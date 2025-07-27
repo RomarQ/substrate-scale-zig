@@ -1,4 +1,5 @@
 # Substrate SCALE Codec for Zig
+> ⚠️ **Warning**: This project is a work in progress. The API is unstable and may change without notice.
 
 A Zig implementation of the SCALE (Simple Concatenated Aggregate Little-Endian) encoding and decoding library for Substrate blockchain projects.
 
