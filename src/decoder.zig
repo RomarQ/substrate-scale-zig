@@ -196,15 +196,15 @@ fn decodeSigned(comptime T: type, data: []const u8) !DecodeResult(T) {
 fn decodeTuple(comptime T: type, allocator: std.mem.Allocator, data: []const u8) !DecodeResult(T) {
     var result: T = undefined;
     var offset: usize = 0;
-    
+
     const fields = std.meta.fields(T);
     inline for (fields) |field| {
         if (offset >= data.len) return error.UnexpectedEndOfData;
-        
+
         const field_result = try decodeAlloc(field.type, allocator, data[offset..]);
         @field(result, field.name) = field_result.value;
         offset += field_result.bytes_read;
     }
-    
+
     return .{ .value = result, .bytes_read = offset };
 }
