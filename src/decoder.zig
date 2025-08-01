@@ -28,11 +28,14 @@ pub fn decodeAlloc(comptime T: type, allocator: std.mem.Allocator, data: []const
         },
         .optional => |info| decodeOption(info.child, allocator, data, decodeAlloc),
         .pointer => |info| {
-            if (info.size == .slice and info.child == u8) {
-                return decodeStringAlloc(allocator, data);
+            if (info.size == .slice) {
+                return decodeSlice(info.child, allocator, data, decodeAlloc);
             } else {
                 return error.UnsupportedType;
             }
+        },
+        .array => |info| {
+            return decodeSlice(info.child, allocator, data, decodeAlloc);
         },
         .@"struct" => {
             return decodeTuple(T, allocator, data);
@@ -94,24 +97,46 @@ fn decodeCompact(comptime T: type, data: []const u8) !DecodeResult(T) {
     }
 }
 
-fn decodeStringAlloc(allocator: std.mem.Allocator, data: []const u8) !DecodeResult([]const u8) {
-    // Use u64 to handle larger string lengths, but ensure they fit in usize
-    const length = try decodeCompact(u64, data);
-    const start = length.bytes_read;
+fn decodeSlice(comptime T: type, allocator: std.mem.Allocator, data: []const u8, decoder: anytype) !DecodeResult(if (T == u8) []const u8 else []T) {
+    const length = try decodeCompact(u32, data);
+    var offset = length.bytes_read;
 
-    // Check if length fits in usize
-    if (length.value > std.math.maxInt(usize)) return error.BigIntegerNotSupported;
+    if (T == u8) {
+        // For strings, just copy the raw bytes
+        const end = offset + length.value;
+        if (data.len < end) return error.InsufficientData;
 
-    const len: usize = @intCast(length.value);
-    const end = start + len;
+        const duped = try allocator.dupe(u8, data[offset..end]);
+        return .{
+            .value = duped,
+            .bytes_read = end,
+        };
+    } else {
+        // For other types, decode each element individually
+        var items = try allocator.alloc(T, length.value);
+        errdefer allocator.free(items);
 
-    if (data.len < end) return error.InsufficientData;
+        var i: usize = 0;
+        while (i < length.value) : (i += 1) {
+            if (offset >= data.len) return error.UnexpectedEndOfData;
+            // Use function parameter introspection to check the decoder signature
+            const decoder_info = @typeInfo(@TypeOf(decoder));
+            const is_allocator_first_param = decoder_info.@"fn".params.len == 2 and
+                decoder_info.@"fn".params[0].type orelse void == std.mem.Allocator;
+            const is_type_first_param = decoder_info.@"fn".params.len == 3 and
+                decoder_info.@"fn".params[0].type orelse void == type;
+            const result = if (is_allocator_first_param)
+                try decoder(allocator, data[offset..])
+            else if (is_type_first_param)
+                try decoder(T, allocator, data[offset..])
+            else
+                try decoder(data[offset..]);
+            items[i] = result.value;
+            offset += result.bytes_read;
+        }
 
-    const duped = try allocator.dupe(u8, data[start..end]);
-    return .{
-        .value = duped,
-        .bytes_read = end,
-    };
+        return .{ .value = items, .bytes_read = offset };
+    }
 }
 
 fn decodeBool(data: []const u8) !DecodeResult(bool) {
@@ -146,31 +171,6 @@ fn decodeOption(comptime T: type, allocator: std.mem.Allocator, data: []const u8
         },
         else => error.InvalidOption,
     };
-}
-
-fn decodeArray(comptime T: type, allocator: std.mem.Allocator, data: []const u8, decoder: anytype) !DecodeResult([]T) {
-    const length = try decodeCompact(u32, data);
-    var offset = length.bytes_read;
-
-    var items = try allocator.alloc(T, length.value);
-    errdefer allocator.free(items);
-
-    var i: usize = 0;
-    while (i < length.value) : (i += 1) {
-        if (offset >= data.len) return error.UnexpectedEndOfData;
-        // Use function parameter introspection to check if the first parameter is an allocator
-        const decoder_info = @typeInfo(@TypeOf(decoder));
-        const is_allocator_first_param = decoder_info.@"fn".params.len == 2 and
-            decoder_info.@"fn".params[0].type orelse void == std.mem.Allocator;
-        const result = if (is_allocator_first_param)
-            try decoder(allocator, data[offset..])
-        else
-            try decoder(data[offset..]);
-        items[i] = result.value;
-        offset += result.bytes_read;
-    }
-
-    return .{ .value = items, .bytes_read = offset };
 }
 
 fn decodeUnsigned(comptime T: type, data: []const u8) !DecodeResult(T) {

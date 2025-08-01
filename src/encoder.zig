@@ -180,16 +180,14 @@ fn encode(value: anytype, buffer: []u8) !usize {
             }
         },
         .pointer => |info| {
-            if (info.size == .slice and info.child == u8) {
-                return encodeByteSlice(value, buffer);
+            if (info.size == .slice) {
+                return encodeArray(info.child, value, buffer, encode);
             } else if (info.size == .one and @typeInfo(info.child) == .array) {
                 // Handle pointers to arrays (like string literals)
                 const array_info = @typeInfo(info.child).array;
-                if (array_info.child == u8) {
-                    // Convert pointer to array into a slice
-                    const slice = value[0..array_info.len];
-                    return encodeByteSlice(slice, buffer);
-                }
+                // Convert pointer to array into a slice
+                const slice = value[0..array_info.len];
+                return encodeFixedArray(info.child, info.len, slice, buffer, encode);
             }
 
             std.debug.print("Unsupported type: {s}\n", .{@typeName(T)});

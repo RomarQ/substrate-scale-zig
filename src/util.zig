@@ -18,17 +18,23 @@ pub fn calculateEncodedSize(value: anytype) !usize {
             }
         },
         .pointer => |info| {
-            if (info.size == .slice and info.child == u8) {
-                return calculateCompactSize(@intCast(value.len)) + value.len;
+            if (info.size == .slice) {
+                if (info.child == u8) {
+                    return calculateCompactSize(@intCast(value.len)) + value.len;
+                } else {
+                    return calculateCompactSize(@intCast(value.len)) + (value.len * @sizeOf(info.child));
+                }
             } else if (info.size == .one and @typeInfo(info.child) == .array) {
                 // Handle pointers to arrays (like string literals)
                 const array_info = @typeInfo(info.child).array;
                 if (array_info.child == u8) {
                     return calculateCompactSize(@intCast(array_info.len)) + array_info.len;
+                } else {
+                    return calculateCompactSize(@intCast(array_info.len)) + (array_info.len * @sizeOf(array_info.child));
                 }
             }
 
-            std.debug.print("Unsupported type: {s}\n", .{@typeName(T)});
+            std.debug.print("Unsupported type: {s}, {any}\n", .{ @typeName(T), @typeInfo(T) });
             return error.UnsupportedType;
         },
         .optional => {

@@ -1,6 +1,31 @@
 pub const encoder = @import("encoder.zig");
 pub const decoder = @import("decoder.zig");
 
+test "encode-and-decode-array" {
+    const std = @import("std");
+    const allocator = std.testing.allocator;
+
+    const test_cases = [_]struct {
+        value: []const u32,
+        encoded: []const u8,
+    }{
+        .{ .value = &[_]u32{ 1, 2, 3 }, .encoded = &[_]u8{ 0x0c, 0x01, 0x00, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x03, 0x00, 0x00, 0x00 } },
+    };
+
+    for (test_cases) |tc| {
+        // Test encoding
+        const buffer = try encoder.encodeAlloc(allocator, tc.value);
+        defer allocator.free(buffer);
+        try std.testing.expectEqualSlices(u8, tc.encoded, buffer);
+
+        // Test decoding
+        const result = try decoder.decodeAlloc([]u32, allocator, tc.encoded);
+        defer allocator.free(result.value);
+        try std.testing.expectEqual(result.bytes_read, tc.encoded.len);
+        try std.testing.expectEqualSlices(u32, tc.value, result.value);
+    }
+}
+
 test "encode-and-decode-tuple" {
     const std = @import("std");
     const allocator = std.testing.allocator;
