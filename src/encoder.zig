@@ -18,13 +18,13 @@ pub fn encodeAlloc(allocator: std.mem.Allocator, value: anytype) ![]u8 {
     return buffer;
 }
 
-fn encodeBool(value: bool, buffer: []u8) !usize {
+pub fn encodeBool(value: bool, buffer: []u8) !usize {
     if (buffer.len < 1) return error.BufferTooSmall;
     buffer[0] = if (value) 0x01 else 0x00;
     return 1;
 }
 
-fn encodeUnsigned(comptime T: type, value: T, buffer: []u8) !usize {
+pub fn encodeUnsigned(comptime T: type, value: T, buffer: []u8) !usize {
     const size = @sizeOf(T);
     if (buffer.len < size) return error.BufferTooSmall;
 
@@ -36,7 +36,7 @@ fn encodeUnsigned(comptime T: type, value: T, buffer: []u8) !usize {
     return size;
 }
 
-fn encodeSigned(comptime T: type, value: T, buffer: []u8) !usize {
+pub fn encodeSigned(comptime T: type, value: T, buffer: []u8) !usize {
     const size = @sizeOf(T);
     if (buffer.len < size) return error.BufferTooSmall;
 
@@ -48,7 +48,7 @@ fn encodeSigned(comptime T: type, value: T, buffer: []u8) !usize {
     return size;
 }
 
-fn encodeByteSlice(value: []const u8, buffer: []u8) !usize {
+pub fn encodeByteSlice(value: []const u8, buffer: []u8) !usize {
     var offset: usize = 0;
 
     // Encode length as compact
@@ -63,7 +63,7 @@ fn encodeByteSlice(value: []const u8, buffer: []u8) !usize {
     return offset;
 }
 
-fn encodeOption(comptime T: type, value: ?T, buffer: []u8, encoder: anytype) !usize {
+pub fn encodeOption(comptime T: type, value: ?T, buffer: []u8, encoder: anytype) !usize {
     if (value) |v| {
         if (buffer.len < 1) return error.BufferTooSmall;
         buffer[0] = 0x01;
@@ -76,7 +76,7 @@ fn encodeOption(comptime T: type, value: ?T, buffer: []u8, encoder: anytype) !us
     }
 }
 
-fn encodeArray(comptime T: type, value: []const T, buffer: []u8, encoder: anytype) !usize {
+pub fn encodeArray(comptime T: type, value: []const T, buffer: []u8, encoder: anytype) !usize {
     var offset: usize = 0;
 
     // Encode length as compact
@@ -92,7 +92,7 @@ fn encodeArray(comptime T: type, value: []const T, buffer: []u8, encoder: anytyp
     return offset;
 }
 
-fn encodeFixedArray(comptime T: type, comptime N: usize, value: [N]T, buffer: []u8, encoder: anytype) !usize {
+pub fn encodeFixedArray(comptime T: type, comptime N: usize, value: [N]T, buffer: []u8, encoder: anytype) !usize {
     var offset: usize = 0;
 
     // Fixed arrays don't encode their length
@@ -104,7 +104,7 @@ fn encodeFixedArray(comptime T: type, comptime N: usize, value: [N]T, buffer: []
     return offset;
 }
 
-fn encodeTuple(value: anytype, buffer: []u8) !usize {
+pub fn encodeTuple(value: anytype, buffer: []u8) !usize {
     var offset: usize = 0;
     const fields = std.meta.fields(@TypeOf(value));
 
@@ -117,7 +117,7 @@ fn encodeTuple(value: anytype, buffer: []u8) !usize {
     return offset;
 }
 
-fn encodeCompact(comptime T: type, value: T, buffer: []u8) !usize {
+pub fn encodeCompact(comptime T: type, value: T, buffer: []u8) !usize {
     const v = @as(u128, value);
 
     if (v < 64) {
@@ -160,7 +160,7 @@ fn encodeCompact(comptime T: type, value: T, buffer: []u8) !usize {
 }
 
 // Generic encode function that dispatches to the appropriate encoder
-fn encode(value: anytype, buffer: []u8) !usize {
+pub fn encode(value: anytype, buffer: []u8) !usize {
     const T = @TypeOf(value);
 
     return switch (@typeInfo(T)) {

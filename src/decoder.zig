@@ -44,7 +44,7 @@ pub fn decodeAlloc(comptime T: type, allocator: std.mem.Allocator, data: []const
     };
 }
 
-fn decodeCompact(comptime T: type, data: []const u8) !DecodeResult(T) {
+pub fn decodeCompact(comptime T: type, data: []const u8) !DecodeResult(T) {
     if (data.len == 0) return error.InsufficientData;
 
     const first_byte = data[0];
@@ -97,7 +97,7 @@ fn decodeCompact(comptime T: type, data: []const u8) !DecodeResult(T) {
     }
 }
 
-fn decodeSlice(comptime T: type, allocator: std.mem.Allocator, data: []const u8, decoder: anytype) !DecodeResult(if (T == u8) []const u8 else []T) {
+pub fn decodeSlice(comptime T: type, allocator: std.mem.Allocator, data: []const u8, decoder: anytype) !DecodeResult(if (T == u8) []const u8 else []T) {
     const length = try decodeCompact(u32, data);
     var offset = length.bytes_read;
 
@@ -139,7 +139,7 @@ fn decodeSlice(comptime T: type, allocator: std.mem.Allocator, data: []const u8,
     }
 }
 
-fn decodeBool(data: []const u8) !DecodeResult(bool) {
+pub fn decodeBool(data: []const u8) !DecodeResult(bool) {
     if (data.len == 0) return error.InsufficientData;
 
     return switch (data[0]) {
@@ -149,7 +149,7 @@ fn decodeBool(data: []const u8) !DecodeResult(bool) {
     };
 }
 
-fn decodeOption(comptime T: type, allocator: std.mem.Allocator, data: []const u8, decoder: anytype) !DecodeResult(?T) {
+pub fn decodeOption(comptime T: type, allocator: std.mem.Allocator, data: []const u8, decoder: anytype) !DecodeResult(?T) {
     if (data.len == 0) return error.InsufficientData;
 
     return switch (data[0]) {
@@ -173,7 +173,7 @@ fn decodeOption(comptime T: type, allocator: std.mem.Allocator, data: []const u8
     };
 }
 
-fn decodeUnsigned(comptime T: type, data: []const u8) !DecodeResult(T) {
+pub fn decodeUnsigned(comptime T: type, data: []const u8) !DecodeResult(T) {
     const size = @sizeOf(T);
     if (data.len < size) return error.InsufficientData;
     const value = if (size == 1)
@@ -183,7 +183,7 @@ fn decodeUnsigned(comptime T: type, data: []const u8) !DecodeResult(T) {
     return .{ .value = value, .bytes_read = size };
 }
 
-fn decodeSigned(comptime T: type, data: []const u8) !DecodeResult(T) {
+pub fn decodeSigned(comptime T: type, data: []const u8) !DecodeResult(T) {
     const size = @sizeOf(T);
     if (data.len < size) return error.InsufficientData;
     const value = if (size == 1)
