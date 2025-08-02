@@ -2,7 +2,46 @@ const std = @import("std");
 const encoder = @import("encoder.zig");
 const decoder = @import("decoder.zig");
 
-test "encode-and-decode-array" {
+test "encode-and-decode-vector-of-strings" {
+    const allocator = std.testing.allocator;
+
+    var strings = [_][]const u8{ "Hello", "World" };
+
+    const test_cases = [_]struct {
+        value: [][]const u8,
+        encoded: []const u8,
+    }{
+        .{
+            .value = strings[0..],
+            .encoded = &[_]u8{
+                0x08, // Compact length (2)
+                0x14, // Compact length (5) for "Hello"
+                0x48, 0x65, 0x6c, 0x6c, 0x6f, // "Hello"
+                0x14, // Compact length (5) for "World"
+                0x57, 0x6f, 0x72, 0x6c, 0x64, // "World"
+            },
+        },
+    };
+
+    for (test_cases) |tc| {
+        // Test encoding
+        const buffer = try encoder.encodeAlloc(allocator, tc.value);
+        defer allocator.free(buffer);
+        try std.testing.expectEqualSlices(u8, tc.encoded, buffer);
+
+        // Test decoding
+        const result = try decoder.decodeAlloc([][]const u8, allocator, tc.encoded);
+        defer allocator.free(result.value);
+        defer for (result.value) |str| allocator.free(str);
+        try std.testing.expectEqual(result.bytes_read, tc.encoded.len);
+        try std.testing.expectEqual(result.value.len, tc.value.len);
+        for (result.value, tc.value) |decoded_str, expected_str| {
+            try std.testing.expectEqualStrings(expected_str, decoded_str);
+        }
+    }
+}
+
+test "encode-and-decode-vector-of-u32" {
     const allocator = std.testing.allocator;
 
     const test_cases = [_]struct {
@@ -137,9 +176,11 @@ test "encode-and-decode-option" {
 }
 
 test "encode-and-decode-string" {
+    // Test both []const u8 and []u8 string types for SCALE encoding/decoding
     const allocator = std.testing.allocator;
 
-    const test_cases = [_]struct {
+    // Test cases for []const u8 (immutable strings)
+    const const_test_cases = [_]struct {
         decoded: []const u8,
         encoded: []const u8,
     }{
@@ -147,10 +188,49 @@ test "encode-and-decode-string" {
             .decoded = "Hello World",
             .encoded = &[_]u8{ 0x2c, 0x48, 0x65, 0x6c, 0x6c, 0x6f, 0x20, 0x57, 0x6f, 0x72, 0x6c, 0x64 },
         },
-        // TODO: Add more test cases
+        .{
+            .decoded = "",
+            .encoded = &[_]u8{0x00},
+        },
+        .{
+            .decoded = "A",
+            .encoded = &[_]u8{ 0x04, 0x41 },
+        },
+        .{
+            .decoded = "Hello",
+            .encoded = &[_]u8{ 0x14, 0x48, 0x65, 0x6c, 0x6c, 0x6f },
+        },
+        .{
+            .decoded = "This is a longer string for testing",
+            .encoded = &[_]u8{ 0x8c, 0x54, 0x68, 0x69, 0x73, 0x20, 0x69, 0x73, 0x20, 0x61, 0x20, 0x6c, 0x6f, 0x6e, 0x67, 0x65, 0x72, 0x20, 0x73, 0x74, 0x72, 0x69, 0x6e, 0x67, 0x20, 0x66, 0x6f, 0x72, 0x20, 0x74, 0x65, 0x73, 0x74, 0x69, 0x6e, 0x67 },
+        },
     };
 
-    for (test_cases) |tc| {
+    // Test cases for []u8 (mutable strings)
+    const mutable_test_cases = [_]struct {
+        decoded: []u8,
+        encoded: []const u8,
+    }{
+        .{
+            .decoded = try allocator.dupe(u8, "Hello World"),
+            .encoded = &[_]u8{ 0x2c, 0x48, 0x65, 0x6c, 0x6c, 0x6f, 0x20, 0x57, 0x6f, 0x72, 0x6c, 0x64 },
+        },
+        .{
+            .decoded = try allocator.dupe(u8, ""),
+            .encoded = &[_]u8{0x00},
+        },
+        .{
+            .decoded = try allocator.dupe(u8, "Test"),
+            .encoded = &[_]u8{ 0x10, 0x54, 0x65, 0x73, 0x74 },
+        },
+        .{
+            .decoded = try allocator.dupe(u8, "Mutable String"),
+            .encoded = &[_]u8{ 0x38, 0x4d, 0x75, 0x74, 0x61, 0x62, 0x6c, 0x65, 0x20, 0x53, 0x74, 0x72, 0x69, 0x6e, 0x67 },
+        },
+    };
+
+    // Test []const u8 encoding and decoding
+    for (const_test_cases) |tc| {
         // Test encoding
         const buffer = try encoder.encodeAlloc(allocator, tc.decoded);
         defer allocator.free(buffer);
@@ -158,6 +238,22 @@ test "encode-and-decode-string" {
 
         // Test decoding
         const result = try decoder.decodeAlloc([]const u8, allocator, tc.encoded);
+        defer allocator.free(result.value);
+        try std.testing.expectEqual(result.bytes_read, tc.encoded.len);
+        try std.testing.expectEqualStrings(tc.decoded, result.value);
+    }
+
+    // Test []u8 encoding and decoding
+    for (mutable_test_cases) |tc| {
+        defer allocator.free(tc.decoded);
+
+        // Test encoding
+        const buffer = try encoder.encodeAlloc(allocator, tc.decoded);
+        defer allocator.free(buffer);
+        try std.testing.expectEqualSlices(u8, tc.encoded, buffer);
+
+        // Test decoding
+        const result = try decoder.decodeAlloc([]u8, allocator, tc.encoded);
         defer allocator.free(result.value);
         try std.testing.expectEqual(result.bytes_read, tc.encoded.len);
         try std.testing.expectEqualStrings(tc.decoded, result.value);

@@ -29,7 +29,18 @@ pub fn decodeAlloc(comptime T: type, allocator: std.mem.Allocator, data: []const
         .optional => |info| decodeOption(info.child, allocator, data, decodeAlloc),
         .pointer => |info| {
             if (info.size == .slice) {
-                return decodeSlice(info.child, allocator, data, decodeAlloc);
+                if (info.child == u8) {
+                    // Handle string slices - decode as []u8 and convert if needed
+                    const result = try decodeSlice(u8, allocator, data, decodeAlloc);
+                    if (T == []const u8) {
+                        // Convert []u8 to []const u8
+                        return .{ .value = result.value, .bytes_read = result.bytes_read };
+                    } else {
+                        return result;
+                    }
+                } else {
+                    return decodeSlice(info.child, allocator, data, decodeAlloc);
+                }
             } else {
                 return error.UnsupportedType;
             }
@@ -97,7 +108,7 @@ pub fn decodeCompact(comptime T: type, data: []const u8) !DecodeResult(T) {
     }
 }
 
-pub fn decodeSlice(comptime T: type, allocator: std.mem.Allocator, data: []const u8, decoder: anytype) !DecodeResult(if (T == u8) []const u8 else []T) {
+pub fn decodeSlice(comptime T: type, allocator: std.mem.Allocator, data: []const u8, decoder: anytype) !DecodeResult(if (T == u8) []u8 else []T) {
     const length = try decodeCompact(u32, data);
     var offset = length.bytes_read;
 

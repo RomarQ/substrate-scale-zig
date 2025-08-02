@@ -187,7 +187,7 @@ pub fn encode(value: anytype, buffer: []u8) !usize {
                 const array_info = @typeInfo(info.child).array;
                 // Convert pointer to array into a slice
                 const slice = value[0..array_info.len];
-                return encodeFixedArray(info.child, info.len, slice, buffer, encode);
+                return encodeArray(array_info.child, slice, buffer, encode);
             }
 
             std.debug.print("Unsupported type: {s}\n", .{@typeName(T)});

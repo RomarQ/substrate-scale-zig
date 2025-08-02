@@ -22,7 +22,11 @@ pub fn calculateEncodedSize(value: anytype) !usize {
                 if (info.child == u8) {
                     return calculateCompactSize(@intCast(value.len)) + value.len;
                 } else {
-                    return calculateCompactSize(@intCast(value.len)) + (value.len * @sizeOf(info.child));
+                    var size = calculateCompactSize(@intCast(value.len));
+                    for (value) |item| {
+                        size += try calculateEncodedSize(item);
+                    }
+                    return size;
                 }
             } else if (info.size == .one and @typeInfo(info.child) == .array) {
                 // Handle pointers to arrays (like string literals)
@@ -30,7 +34,11 @@ pub fn calculateEncodedSize(value: anytype) !usize {
                 if (array_info.child == u8) {
                     return calculateCompactSize(@intCast(array_info.len)) + array_info.len;
                 } else {
-                    return calculateCompactSize(@intCast(array_info.len)) + (array_info.len * @sizeOf(array_info.child));
+                    var size = calculateCompactSize(@intCast(array_info.len));
+                    for (value) |item| {
+                        size += try calculateEncodedSize(item);
+                    }
+                    return size;
                 }
             }
 
