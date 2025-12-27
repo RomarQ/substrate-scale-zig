@@ -1,6 +1,7 @@
 const std = @import("std");
 const encoder = @import("encoder.zig");
 const decoder = @import("decoder.zig");
+const types = @import("types.zig");
 
 test "encode-and-decode-vector-of-strings" {
     const allocator = std.testing.allocator;
@@ -151,15 +152,18 @@ test "encode-and-decode-unsigned-integer" {
     }
 }
 
-test "encode-and-decode-option" {
+test "encode-and-decode-option-bool" {
+    // Standard ?bool uses 2-byte encoding like other Option<T>:
+    // None = 0x00, Some(false) = 0x01 0x00, Some(true) = 0x01 0x01
     const allocator = std.testing.allocator;
 
     const test_cases = [_]struct {
         value: ?bool,
         encoded: []const u8,
     }{
-        .{ .value = false, .encoded = &[_]u8{ 0x01, 0x00 } },
         .{ .value = null, .encoded = &[_]u8{0x00} },
+        .{ .value = true, .encoded = &[_]u8{ 0x01, 0x01 } },
+        .{ .value = false, .encoded = &[_]u8{ 0x01, 0x00 } },
     };
 
     for (test_cases) |tc| {
@@ -170,6 +174,83 @@ test "encode-and-decode-option" {
 
         // Test decoding
         const result = try decoder.decodeAlloc(?bool, allocator, tc.encoded);
+        try std.testing.expectEqual(result.bytes_read, tc.encoded.len);
+        try std.testing.expectEqual(result.value, tc.value);
+    }
+}
+
+test "encode-and-decode-option-type" {
+    // types.Option(T) is a generic option type with standard SCALE encoding:
+    // None = 0x00, Some(value) = 0x01 + encoded value
+    const allocator = std.testing.allocator;
+
+    // Test Option(bool)
+    {
+        const OptionBool = types.Option(bool);
+        const test_cases = [_]struct {
+            value: OptionBool,
+            encoded: []const u8,
+        }{
+            .{ .value = OptionBool.none(), .encoded = &[_]u8{0x00} },
+            .{ .value = OptionBool.some(true), .encoded = &[_]u8{ 0x01, 0x01 } },
+            .{ .value = OptionBool.some(false), .encoded = &[_]u8{ 0x01, 0x00 } },
+        };
+
+        for (test_cases) |tc| {
+            const buffer = try encoder.encodeAlloc(allocator, tc.value);
+            defer allocator.free(buffer);
+            try std.testing.expectEqualSlices(u8, tc.encoded, buffer);
+
+            const result = try decoder.decodeAlloc(OptionBool, allocator, tc.encoded);
+            try std.testing.expectEqual(result.bytes_read, tc.encoded.len);
+            try std.testing.expectEqual(result.value.unwrap(), tc.value.unwrap());
+        }
+    }
+
+    // Test Option(u32)
+    {
+        const OptionU32 = types.Option(u32);
+        const test_cases = [_]struct {
+            value: OptionU32,
+            encoded: []const u8,
+        }{
+            .{ .value = OptionU32.none(), .encoded = &[_]u8{0x00} },
+            .{ .value = OptionU32.some(42), .encoded = &[_]u8{ 0x01, 0x2a, 0x00, 0x00, 0x00 } },
+        };
+
+        for (test_cases) |tc| {
+            const buffer = try encoder.encodeAlloc(allocator, tc.value);
+            defer allocator.free(buffer);
+            try std.testing.expectEqualSlices(u8, tc.encoded, buffer);
+
+            const result = try decoder.decodeAlloc(OptionU32, allocator, tc.encoded);
+            try std.testing.expectEqual(result.bytes_read, tc.encoded.len);
+            try std.testing.expectEqual(result.value.unwrap(), tc.value.unwrap());
+        }
+    }
+}
+
+test "encode-and-decode-option-u32" {
+    // Regular Option<T> uses standard encoding: 0x00 for None, 0x01 + value for Some
+    const allocator = std.testing.allocator;
+
+    const test_cases = [_]struct {
+        value: ?u32,
+        encoded: []const u8,
+    }{
+        .{ .value = null, .encoded = &[_]u8{0x00} },
+        .{ .value = 42, .encoded = &[_]u8{ 0x01, 0x2a, 0x00, 0x00, 0x00 } },
+        .{ .value = 0, .encoded = &[_]u8{ 0x01, 0x00, 0x00, 0x00, 0x00 } },
+    };
+
+    for (test_cases) |tc| {
+        // Test encoding
+        const buffer = try encoder.encodeAlloc(allocator, tc.value);
+        defer allocator.free(buffer);
+        try std.testing.expectEqualSlices(u8, tc.encoded, buffer);
+
+        // Test decoding
+        const result = try decoder.decodeAlloc(?u32, allocator, tc.encoded);
         try std.testing.expectEqual(result.bytes_read, tc.encoded.len);
         try std.testing.expectEqual(result.value, tc.value);
     }
@@ -281,4 +362,419 @@ test "encode-and-decode-bool" {
         try std.testing.expectEqual(result.bytes_read, 1);
         try std.testing.expectEqual(result.value, tc.value);
     }
+}
+
+test "encode-and-decode-tagged-union" {
+    // Test tagged union (enum) encoding/decoding
+    const allocator = std.testing.allocator;
+
+    const SimpleEnum = union(enum) {
+        Unit,
+        WithU32: u32,
+        WithBool: bool,
+        WithTuple: struct { u32, u64 },
+    };
+
+    const test_cases = [_]struct {
+        value: SimpleEnum,
+        encoded: []const u8,
+    }{
+        // Unit variant (index 0, no payload)
+        .{ .value = .Unit, .encoded = &[_]u8{0x00} },
+        // WithU32 variant (index 1, u32 payload)
+        .{ .value = .{ .WithU32 = 42 }, .encoded = &[_]u8{ 0x01, 0x2a, 0x00, 0x00, 0x00 } },
+        // WithBool variant (index 2, bool payload)
+        .{ .value = .{ .WithBool = true }, .encoded = &[_]u8{ 0x02, 0x01 } },
+        // WithTuple variant (index 3, tuple payload)
+        .{
+            .value = .{ .WithTuple = .{ 1, 2 } },
+            .encoded = &[_]u8{ 0x03, 0x01, 0x00, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 },
+        },
+    };
+
+    for (test_cases) |tc| {
+        // Test encoding
+        const buffer = try encoder.encodeAlloc(allocator, tc.value);
+        defer allocator.free(buffer);
+        try std.testing.expectEqualSlices(u8, tc.encoded, buffer);
+
+        // Test decoding
+        const result = try decoder.decodeAlloc(SimpleEnum, allocator, tc.encoded);
+        try std.testing.expectEqual(result.bytes_read, tc.encoded.len);
+        try std.testing.expectEqual(result.value, tc.value);
+    }
+}
+
+test "encode-and-decode-tagged-union-custom-indices" {
+    // Test tagged union with custom indices via scale_indices declaration
+    const allocator = std.testing.allocator;
+
+    const CustomIndexEnum = union(enum) {
+        A,
+        B: u32,
+        C: u64,
+
+        // Custom indices matching Rust's #[codec(index = N)]
+        pub const scale_indices = .{
+            .A = 0,
+            .B = 15,
+            .C = 255,
+        };
+    };
+
+    const test_cases = [_]struct {
+        value: CustomIndexEnum,
+        encoded: []const u8,
+    }{
+        .{ .value = .A, .encoded = &[_]u8{0x00} },
+        .{ .value = .{ .B = 42 }, .encoded = &[_]u8{ 0x0f, 0x2a, 0x00, 0x00, 0x00 } }, // index 15
+        .{ .value = .{ .C = 100 }, .encoded = &[_]u8{ 0xff, 0x64, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 } }, // index 255
+    };
+
+    for (test_cases) |tc| {
+        // Test encoding
+        const buffer = try encoder.encodeAlloc(allocator, tc.value);
+        defer allocator.free(buffer);
+        try std.testing.expectEqualSlices(u8, tc.encoded, buffer);
+
+        // Test decoding
+        const result = try decoder.decodeAlloc(CustomIndexEnum, allocator, tc.encoded);
+        try std.testing.expectEqual(result.bytes_read, tc.encoded.len);
+        try std.testing.expectEqual(result.value, tc.value);
+    }
+}
+
+test "custom-encode-decode" {
+    // Test custom scaleEncode/scaleDecode methods via @hasDecl
+    const allocator = std.testing.allocator;
+
+    // A type with custom encoding: encodes value * 2
+    const CustomType = struct {
+        value: u32,
+
+        const Self = @This();
+
+        pub fn scaleEncode(self: Self, buffer: []u8) !usize {
+            // Custom encoding: multiply value by 2
+            const encoded_value = self.value * 2;
+            if (buffer.len < 4) return error.BufferTooSmall;
+            std.mem.writeInt(u32, buffer[0..4], encoded_value, .little);
+            return 4;
+        }
+
+        pub fn scaleDecode(_: std.mem.Allocator, data: []const u8) !decoder.DecodeResult(Self) {
+            if (data.len < 4) return error.InsufficientData;
+            const encoded_value = std.mem.readInt(u32, data[0..4], .little);
+            // Custom decoding: divide by 2
+            return .{
+                .value = Self{ .value = encoded_value / 2 },
+                .bytes_read = 4,
+            };
+        }
+
+        pub fn scaleEncodedSize(_: Self) usize {
+            return 4;
+        }
+    };
+
+    const original = CustomType{ .value = 21 };
+
+    // Test encoding (21 * 2 = 42)
+    const buffer = try encoder.encodeAlloc(allocator, original);
+    defer allocator.free(buffer);
+    try std.testing.expectEqualSlices(u8, &[_]u8{ 0x2a, 0x00, 0x00, 0x00 }, buffer);
+
+    // Test decoding (42 / 2 = 21)
+    const result = try decoder.decodeAlloc(CustomType, allocator, buffer);
+    try std.testing.expectEqual(result.bytes_read, 4);
+    try std.testing.expectEqual(result.value.value, 21);
+}
+
+test "encode-and-decode-result" {
+    // Test Result(T, E) type matching Rust's Result encoding
+    const allocator = std.testing.allocator;
+
+    const R = types.Result(u32, u8);
+
+    // Test Ok variant: 0x00 + value
+    {
+        const ok_value = R.fromOk(42);
+        const buffer = try encoder.encodeAlloc(allocator, ok_value);
+        defer allocator.free(buffer);
+        // 0x00 (Ok) + 0x2a,0x00,0x00,0x00 (u32 = 42)
+        try std.testing.expectEqualSlices(u8, &[_]u8{ 0x00, 0x2a, 0x00, 0x00, 0x00 }, buffer);
+
+        const result = try decoder.decodeAlloc(R, allocator, buffer);
+        try std.testing.expectEqual(result.bytes_read, 5);
+        try std.testing.expect(result.value.isOk());
+        try std.testing.expectEqual(result.value.ok, 42);
+    }
+
+    // Test Err variant: 0x01 + error
+    {
+        const err_value = R.fromErr(1);
+        const buffer = try encoder.encodeAlloc(allocator, err_value);
+        defer allocator.free(buffer);
+        // 0x01 (Err) + 0x01 (u8 = 1)
+        try std.testing.expectEqualSlices(u8, &[_]u8{ 0x01, 0x01 }, buffer);
+
+        const result = try decoder.decodeAlloc(R, allocator, buffer);
+        try std.testing.expectEqual(result.bytes_read, 2);
+        try std.testing.expect(result.value.isErr());
+        try std.testing.expectEqual(result.value.err, 1);
+    }
+}
+
+test "encode-and-decode-compact-wrapper" {
+    // Test Compact(T) wrapper type for explicit compact encoding
+    const allocator = std.testing.allocator;
+
+    const test_cases = [_]struct {
+        value: u32,
+        encoded: []const u8,
+    }{
+        .{ .value = 0, .encoded = &[_]u8{0x00} },
+        .{ .value = 1, .encoded = &[_]u8{0x04} },
+        .{ .value = 63, .encoded = &[_]u8{0xfc} },
+        .{ .value = 64, .encoded = &[_]u8{ 0x01, 0x01 } },
+        .{ .value = 16383, .encoded = &[_]u8{ 0xfd, 0xff } },
+        .{ .value = 16384, .encoded = &[_]u8{ 0x02, 0x00, 0x01, 0x00 } },
+    };
+
+    for (test_cases) |tc| {
+        const compact = types.Compact(u32).init(tc.value);
+
+        // Test encoding
+        const buffer = try encoder.encodeAlloc(allocator, compact);
+        defer allocator.free(buffer);
+        try std.testing.expectEqualSlices(u8, tc.encoded, buffer);
+
+        // Test decoding
+        const result = try decoder.decodeAlloc(types.Compact(u32), allocator, tc.encoded);
+        try std.testing.expectEqual(result.bytes_read, tc.encoded.len);
+        try std.testing.expectEqual(result.value.value, tc.value);
+    }
+}
+
+test "encode-struct-with-compact-field" {
+    // Test using Compact(T) in struct fields
+    const allocator = std.testing.allocator;
+
+    const MyStruct = struct {
+        id: types.Compact(u32),
+        name_len: types.Compact(u32),
+    };
+
+    const value = MyStruct{
+        .id = types.Compact(u32).init(42),
+        .name_len = types.Compact(u32).init(100),
+    };
+
+    // 42 -> compact 0xa8 (42 << 2 = 168 = 0xa8)
+    // 100 -> compact two-byte mode: ((100 & 0x3f) << 2) | 0x01 = 0x91, 100 >> 6 = 1
+    const expected = &[_]u8{ 0xa8, 0x91, 0x01 };
+
+    const buffer = try encoder.encodeAlloc(allocator, value);
+    defer allocator.free(buffer);
+    try std.testing.expectEqualSlices(u8, expected, buffer);
+
+    const result = try decoder.decodeAlloc(MyStruct, allocator, buffer);
+    try std.testing.expectEqual(result.value.id.value, 42);
+    try std.testing.expectEqual(result.value.name_len.value, 100);
+}
+
+// ============================================================================
+// Rust parity tests - ported from parity-scale-codec
+// ============================================================================
+
+test "compact-integer-edge-cases" {
+    // Test compact encoding at all mode boundaries (from Rust tests)
+    const TestCase = struct {
+        value: u64,
+        expected_len: usize,
+        expected: []const u8,
+    };
+
+    const test_cases = [_]TestCase{
+        // Single-byte mode: 0-63
+        .{ .value = 0, .expected_len = 1, .expected = &[_]u8{0x00} },
+        .{ .value = 1, .expected_len = 1, .expected = &[_]u8{0x04} },
+        .{ .value = 63, .expected_len = 1, .expected = &[_]u8{0xfc} },
+
+        // Two-byte mode: 64-16383
+        .{ .value = 64, .expected_len = 2, .expected = &[_]u8{ 0x01, 0x01 } },
+        .{ .value = 255, .expected_len = 2, .expected = &[_]u8{ 0xfd, 0x03 } },
+        .{ .value = 16383, .expected_len = 2, .expected = &[_]u8{ 0xfd, 0xff } },
+
+        // Four-byte mode: 16384-1073741823
+        .{ .value = 16384, .expected_len = 4, .expected = &[_]u8{ 0x02, 0x00, 0x01, 0x00 } },
+        .{ .value = 1073741823, .expected_len = 4, .expected = &[_]u8{ 0xfe, 0xff, 0xff, 0xff } },
+
+        // Big integer mode: 1073741824+
+        .{ .value = 1073741824, .expected_len = 5, .expected = &[_]u8{ 0x03, 0x00, 0x00, 0x00, 0x40 } },
+    };
+
+    for (test_cases) |tc| {
+        var buffer: [16]u8 = undefined;
+        const len = try encoder.encodeCompact(u64, tc.value, &buffer);
+        try std.testing.expectEqual(tc.expected_len, len);
+        try std.testing.expectEqualSlices(u8, tc.expected, buffer[0..len]);
+
+        // Verify round-trip
+        const result = try decoder.decodeCompact(u64, tc.expected);
+        try std.testing.expectEqual(tc.value, result.value);
+        try std.testing.expectEqual(tc.expected_len, result.bytes_read);
+    }
+}
+
+test "compact-u64-max" {
+    // Test u64::MAX compact encoding (9 bytes: 1 header + 8 data)
+    const value: u64 = std.math.maxInt(u64);
+    var buffer: [16]u8 = undefined;
+
+    const len = try encoder.encodeCompact(u64, value, &buffer);
+    try std.testing.expectEqual(@as(usize, 9), len);
+
+    // Header: (8 - 4) << 2 | 0b11 = 4 << 2 | 3 = 19 = 0x13
+    try std.testing.expectEqual(@as(u8, 0x13), buffer[0]);
+
+    // Verify round-trip
+    const result = try decoder.decodeCompact(u64, buffer[0..len]);
+    try std.testing.expectEqual(value, result.value);
+}
+
+test "signed-integers" {
+    // Test signed integer encoding (two's complement, little-endian)
+    const allocator = std.testing.allocator;
+
+    // i8
+    {
+        const value: i8 = -1;
+        const buffer = try encoder.encodeAlloc(allocator, value);
+        defer allocator.free(buffer);
+        try std.testing.expectEqualSlices(u8, &[_]u8{0xff}, buffer);
+
+        const result = try decoder.decodeAlloc(i8, allocator, buffer);
+        try std.testing.expectEqual(value, result.value);
+    }
+
+    // i16
+    {
+        const value: i16 = -256;
+        const buffer = try encoder.encodeAlloc(allocator, value);
+        defer allocator.free(buffer);
+        try std.testing.expectEqualSlices(u8, &[_]u8{ 0x00, 0xff }, buffer);
+
+        const result = try decoder.decodeAlloc(i16, allocator, buffer);
+        try std.testing.expectEqual(value, result.value);
+    }
+
+    // i32
+    {
+        const value: i32 = -1;
+        const buffer = try encoder.encodeAlloc(allocator, value);
+        defer allocator.free(buffer);
+        try std.testing.expectEqualSlices(u8, &[_]u8{ 0xff, 0xff, 0xff, 0xff }, buffer);
+
+        const result = try decoder.decodeAlloc(i32, allocator, buffer);
+        try std.testing.expectEqual(value, result.value);
+    }
+}
+
+test "struct-encoding-parity" {
+    // Matches Rust: Struct { a: 15, b: 9 } followed by string "Hello"
+    const allocator = std.testing.allocator;
+
+    const TestStruct = struct {
+        a: u32,
+        b: u64,
+    };
+
+    const value = TestStruct{ .a = 15, .b = 9 };
+    const expected = &[_]u8{
+        0x0f, 0x00, 0x00, 0x00, // u32 = 15
+        0x09, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // u64 = 9
+    };
+
+    const buffer = try encoder.encodeAlloc(allocator, value);
+    defer allocator.free(buffer);
+    try std.testing.expectEqualSlices(u8, expected, buffer);
+
+    const result = try decoder.decodeAlloc(TestStruct, allocator, buffer);
+    try std.testing.expectEqual(value, result.value);
+}
+
+test "fixed-array-encoding" {
+    // Fixed arrays don't include length prefix (unlike slices)
+    const allocator = std.testing.allocator;
+
+    const arr: [3]u8 = .{ 1, 2, 3 };
+    const expected = &[_]u8{
+        0x0c, // compact length 3
+        0x01, 0x02, 0x03, // data
+    };
+
+    const buffer = try encoder.encodeAlloc(allocator, arr);
+    defer allocator.free(buffer);
+    try std.testing.expectEqualSlices(u8, expected, buffer);
+}
+
+test "fixed-array-of-u32" {
+    // Fixed arrays of non-u8 types
+    const allocator = std.testing.allocator;
+
+    const arr: [2]u32 = .{ 1, 2 };
+    const expected = &[_]u8{
+        0x01, 0x00, 0x00, 0x00, // u32 = 1
+        0x02, 0x00, 0x00, 0x00, // u32 = 2
+    };
+
+    const buffer = try encoder.encodeAlloc(allocator, arr);
+    defer allocator.free(buffer);
+    try std.testing.expectEqualSlices(u8, expected, buffer);
+}
+
+test "empty-vector" {
+    // Empty vector should just be compact(0)
+    const allocator = std.testing.allocator;
+
+    const empty: []const u32 = &[_]u32{};
+    const expected = &[_]u8{0x00}; // compact 0
+
+    const buffer = try encoder.encodeAlloc(allocator, empty);
+    defer allocator.free(buffer);
+    try std.testing.expectEqualSlices(u8, expected, buffer);
+}
+
+test "nested-struct" {
+    // Test nested struct encoding
+    const allocator = std.testing.allocator;
+
+    const Inner = struct {
+        x: u16,
+        y: u16,
+    };
+
+    const Outer = struct {
+        id: u32,
+        point: Inner,
+    };
+
+    const value = Outer{
+        .id = 1,
+        .point = Inner{ .x = 10, .y = 20 },
+    };
+
+    const expected = &[_]u8{
+        0x01, 0x00, 0x00, 0x00, // u32 id = 1
+        0x0a, 0x00, // u16 x = 10
+        0x14, 0x00, // u16 y = 20
+    };
+
+    const buffer = try encoder.encodeAlloc(allocator, value);
+    defer allocator.free(buffer);
+    try std.testing.expectEqualSlices(u8, expected, buffer);
+
+    const result = try decoder.decodeAlloc(Outer, allocator, buffer);
+    try std.testing.expectEqual(value, result.value);
 }

@@ -12,12 +12,22 @@ pub const DecodeError = error{
     BigIntegerNotSupported,
     InvalidBool,
     InvalidOption,
+    InvalidEnumVariant,
     UnexpectedEndOfData,
 };
 
 // Decode with allocation.
 pub fn decodeAlloc(comptime T: type, allocator: std.mem.Allocator, data: []const u8) !DecodeResult(T) {
-    return switch (@typeInfo(T)) {
+    const type_info = @typeInfo(T);
+
+    // Check for custom scaleDecode method first (for structs and unions)
+    if (type_info == .@"struct" or type_info == .@"union") {
+        if (@hasDecl(T, "scaleDecode")) {
+            return T.scaleDecode(allocator, data);
+        }
+    }
+
+    return switch (type_info) {
         .bool => try decodeBool(data),
         .int => |info| {
             if (info.signedness == .unsigned) {
@@ -50,6 +60,9 @@ pub fn decodeAlloc(comptime T: type, allocator: std.mem.Allocator, data: []const
         },
         .@"struct" => {
             return decodeTuple(T, allocator, data);
+        },
+        .@"union" => {
+            return decodeTaggedUnion(T, allocator, data);
         },
         else => error.UnsupportedType,
     };
@@ -198,7 +211,7 @@ pub fn decodeSigned(comptime T: type, data: []const u8) !DecodeResult(T) {
     const size = @sizeOf(T);
     if (data.len < size) return error.InsufficientData;
     const value = if (size == 1)
-        @as(T, @intCast(data[0]))
+        @as(T, @bitCast(data[0]))
     else
         std.mem.readInt(T, data[0..size], .little);
     return .{ .value = value, .bytes_read = size };
@@ -218,4 +231,44 @@ fn decodeTuple(comptime T: type, allocator: std.mem.Allocator, data: []const u8)
     }
 
     return .{ .value = result, .bytes_read = offset };
+}
+
+fn decodeTaggedUnion(comptime T: type, allocator: std.mem.Allocator, data: []const u8) !DecodeResult(T) {
+    const info = @typeInfo(T).@"union";
+
+    if (info.tag_type == null) {
+        @compileError("Untagged unions cannot be SCALE decoded. Use a tagged union (union(enum)).");
+    }
+
+    if (data.len < 1) return error.InsufficientData;
+
+    const index = data[0];
+    const offset: usize = 1;
+
+    // Check for custom indices via scale_indices declaration
+    const has_custom_indices = @hasDecl(T, "scale_indices");
+
+    inline for (info.fields) |field| {
+        const field_index: u8 = if (has_custom_indices)
+            @field(T.scale_indices, field.name)
+        else
+            @intFromEnum(@field(info.tag_type.?, field.name));
+
+        if (index == field_index) {
+            if (field.type == void) {
+                return .{
+                    .value = @unionInit(T, field.name, {}),
+                    .bytes_read = offset,
+                };
+            } else {
+                const result = try decodeAlloc(field.type, allocator, data[offset..]);
+                return .{
+                    .value = @unionInit(T, field.name, result.value),
+                    .bytes_read = offset + result.bytes_read,
+                };
+            }
+        }
+    }
+
+    return error.InvalidEnumVariant;
 }

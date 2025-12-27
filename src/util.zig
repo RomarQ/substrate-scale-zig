@@ -2,8 +2,16 @@ const std = @import("std");
 
 pub fn calculateEncodedSize(value: anytype) !usize {
     const T = @TypeOf(value);
+    const type_info = @typeInfo(T);
 
-    return switch (@typeInfo(T)) {
+    // Check for custom scaleEncodedSize method first (for structs and unions)
+    if (type_info == .@"struct" or type_info == .@"union") {
+        if (@hasDecl(T, "scaleEncodedSize")) {
+            return value.scaleEncodedSize();
+        }
+    }
+
+    return switch (type_info) {
         .bool => 1,
         .int => |info| info.bits / 8,
         .array => |info| {
@@ -55,6 +63,23 @@ pub fn calculateEncodedSize(value: anytype) !usize {
             inline for (fields) |field| {
                 const field_value = @field(value, field.name);
                 size += try calculateEncodedSize(field_value);
+            }
+            return size;
+        },
+        .@"union" => |info| {
+            // 1 byte for variant index + payload size
+            var size: usize = 1;
+            const tag = std.meta.activeTag(value);
+            const tag_int = @intFromEnum(tag);
+
+            inline for (info.fields) |field| {
+                if (@intFromEnum(@field(info.tag_type.?, field.name)) == tag_int) {
+                    if (field.type != void) {
+                        const field_value = @field(value, field.name);
+                        size += try calculateEncodedSize(field_value);
+                    }
+                    break;
+                }
             }
             return size;
         },

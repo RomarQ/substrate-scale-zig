@@ -117,6 +117,49 @@ pub fn encodeTuple(value: anytype, buffer: []u8) !usize {
     return offset;
 }
 
+pub fn encodeTaggedUnion(comptime T: type, value: T, buffer: []u8) !usize {
+    const info = @typeInfo(T).@"union";
+
+    if (info.tag_type == null) {
+        @compileError("Untagged unions cannot be SCALE encoded. Use a tagged union (union(enum)).");
+    }
+
+    var offset: usize = 0;
+
+    // Get the active tag
+    const tag = std.meta.activeTag(value);
+    const tag_int = @intFromEnum(tag);
+
+    // Check for custom indices via scale_indices declaration
+    const index: u8 = if (@hasDecl(T, "scale_indices")) blk: {
+        inline for (info.fields) |field| {
+            if (@intFromEnum(@field(info.tag_type.?, field.name)) == tag_int) {
+                break :blk @field(T.scale_indices, field.name);
+            }
+        }
+        unreachable;
+    } else @intCast(tag_int);
+
+    // Encode variant index as u8
+    if (buffer.len < 1) return error.BufferTooSmall;
+    buffer[0] = index;
+    offset += 1;
+
+    // Encode the active payload
+    inline for (info.fields) |field| {
+        if (@intFromEnum(@field(info.tag_type.?, field.name)) == tag_int) {
+            if (field.type != void) {
+                const field_value = @field(value, field.name);
+                const encoded = try encode(field_value, buffer[offset..]);
+                offset += encoded;
+            }
+            break;
+        }
+    }
+
+    return offset;
+}
+
 pub fn encodeCompact(comptime T: type, value: T, buffer: []u8) !usize {
     const v = @as(u128, value);
 
@@ -162,8 +205,16 @@ pub fn encodeCompact(comptime T: type, value: T, buffer: []u8) !usize {
 // Generic encode function that dispatches to the appropriate encoder
 pub fn encode(value: anytype, buffer: []u8) !usize {
     const T = @TypeOf(value);
+    const type_info = @typeInfo(T);
 
-    return switch (@typeInfo(T)) {
+    // Check for custom scaleEncode method first (for structs and unions)
+    if (type_info == .@"struct" or type_info == .@"union") {
+        if (@hasDecl(T, "scaleEncode")) {
+            return value.scaleEncode(buffer);
+        }
+    }
+
+    return switch (type_info) {
         .bool => encodeBool(value, buffer),
         .int => |info| {
             if (info.signedness == .unsigned) {
@@ -198,6 +249,9 @@ pub fn encode(value: anytype, buffer: []u8) !usize {
         },
         .@"struct" => {
             return encodeTuple(value, buffer);
+        },
+        .@"union" => {
+            return encodeTaggedUnion(T, value, buffer);
         },
         else => {
             std.debug.print("Unsupported type: {s}\n", .{@typeName(T)});
