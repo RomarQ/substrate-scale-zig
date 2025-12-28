@@ -1,0 +1,50 @@
+name: Code Review from AI Agent
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+  issue_comment:
+    types: [created]
+
+jobs:
+  claude-review:
+    # Run on PR events, or on issue comments that are on PRs and mention @claude
+    if: |
+      github.event_name == 'pull_request' ||
+      (github.event_name == 'issue_comment' &&
+       github.event.issue.pull_request &&
+       contains(github.event.comment.body, '@claude'))
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+      issues: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Run Claude Code Review
+        uses: anthropics/claude-code-action@v1
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          # Direct prompt for initial PR review
+          direct_prompt: |
+            Review this pull request for a Zig SCALE codec library.
+
+            Focus on:
+            1. **Correctness**: Does the code correctly implement SCALE encoding/decoding?
+            2. **Zig idioms**: Does the code follow Zig best practices?
+            3. **Memory safety**: Are there any memory leaks or unsafe patterns?
+            4. **Error handling**: Are errors properly propagated and handled?
+            5. **Test coverage**: Are new features adequately tested?
+            6. **Documentation**: Are public APIs documented?
+
+            For context, this is a SCALE codec implementation aligned with Rust's parity-scale-codec.
+            Key types: Compact(T), Result(T, E), Option(T), tagged unions with scale_indices.
+
+          # Timeout for the review (5 minutes)
+          timeout_minutes: 10
+          claude_args: |
+              --model opus
