@@ -679,6 +679,75 @@ test "signed-integers" {
         const result = try decoder.decodeAlloc(i32, allocator, buffer);
         try std.testing.expectEqual(value, result.value);
     }
+
+    // i64
+    {
+        const value: i64 = -1;
+        const buffer = try encoder.encodeAlloc(allocator, value);
+        defer allocator.free(buffer);
+        try std.testing.expectEqualSlices(u8, &[_]u8{ 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff }, buffer);
+
+        const result = try decoder.decodeAlloc(i64, allocator, buffer);
+        try std.testing.expectEqual(value, result.value);
+    }
+
+    // i64 positive max
+    {
+        const value: i64 = std.math.maxInt(i64);
+        const buffer = try encoder.encodeAlloc(allocator, value);
+        defer allocator.free(buffer);
+        try std.testing.expectEqualSlices(u8, &[_]u8{ 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x7f }, buffer);
+
+        const result = try decoder.decodeAlloc(i64, allocator, buffer);
+        try std.testing.expectEqual(value, result.value);
+    }
+
+    // i64 negative min
+    {
+        const value: i64 = std.math.minInt(i64);
+        const buffer = try encoder.encodeAlloc(allocator, value);
+        defer allocator.free(buffer);
+        try std.testing.expectEqualSlices(u8, &[_]u8{ 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x80 }, buffer);
+
+        const result = try decoder.decodeAlloc(i64, allocator, buffer);
+        try std.testing.expectEqual(value, result.value);
+    }
+
+    // i128
+    {
+        const value: i128 = -1;
+        const buffer = try encoder.encodeAlloc(allocator, value);
+        defer allocator.free(buffer);
+        const expected = [_]u8{ 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff };
+        try std.testing.expectEqualSlices(u8, &expected, buffer);
+
+        const result = try decoder.decodeAlloc(i128, allocator, buffer);
+        try std.testing.expectEqual(value, result.value);
+    }
+
+    // i128 positive max
+    {
+        const value: i128 = std.math.maxInt(i128);
+        const buffer = try encoder.encodeAlloc(allocator, value);
+        defer allocator.free(buffer);
+        const expected = [_]u8{ 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x7f };
+        try std.testing.expectEqualSlices(u8, &expected, buffer);
+
+        const result = try decoder.decodeAlloc(i128, allocator, buffer);
+        try std.testing.expectEqual(value, result.value);
+    }
+
+    // i128 negative min
+    {
+        const value: i128 = std.math.minInt(i128);
+        const buffer = try encoder.encodeAlloc(allocator, value);
+        defer allocator.free(buffer);
+        const expected = [_]u8{ 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x80 };
+        try std.testing.expectEqualSlices(u8, &expected, buffer);
+
+        const result = try decoder.decodeAlloc(i128, allocator, buffer);
+        try std.testing.expectEqual(value, result.value);
+    }
 }
 
 test "struct-encoding-parity" {
@@ -777,4 +846,238 @@ test "nested-struct" {
 
     const result = try decoder.decodeAlloc(Outer, allocator, buffer);
     try std.testing.expectEqual(value, result.value);
+}
+
+// ============================================================================
+// Edge case and boundary condition tests
+// ============================================================================
+
+test "result-with-void-ok" {
+    // Test Result<void, E> - Ok variant has no payload
+    const allocator = std.testing.allocator;
+
+    const VoidResult = types.Result(void, u8);
+
+    // Ok(void): just 0x00
+    {
+        const ok_value = VoidResult.fromOk({});
+        const buffer = try encoder.encodeAlloc(allocator, ok_value);
+        defer allocator.free(buffer);
+        try std.testing.expectEqualSlices(u8, &[_]u8{0x00}, buffer);
+
+        const result = try decoder.decodeAlloc(VoidResult, allocator, buffer);
+        try std.testing.expectEqual(result.bytes_read, 1);
+        try std.testing.expect(result.value.isOk());
+    }
+
+    // Err(1): 0x01 + error byte
+    {
+        const err_value = VoidResult.fromErr(1);
+        const buffer = try encoder.encodeAlloc(allocator, err_value);
+        defer allocator.free(buffer);
+        try std.testing.expectEqualSlices(u8, &[_]u8{ 0x01, 0x01 }, buffer);
+
+        const result = try decoder.decodeAlloc(VoidResult, allocator, buffer);
+        try std.testing.expectEqual(result.bytes_read, 2);
+        try std.testing.expect(result.value.isErr());
+        try std.testing.expectEqual(result.value.err, 1);
+    }
+}
+
+test "result-with-void-err" {
+    // Test Result<T, void> - Err variant has no payload
+    const allocator = std.testing.allocator;
+
+    const VoidErrResult = types.Result(u32, void);
+
+    // Ok(42)
+    {
+        const ok_value = VoidErrResult.fromOk(42);
+        const buffer = try encoder.encodeAlloc(allocator, ok_value);
+        defer allocator.free(buffer);
+        try std.testing.expectEqualSlices(u8, &[_]u8{ 0x00, 0x2a, 0x00, 0x00, 0x00 }, buffer);
+
+        const result = try decoder.decodeAlloc(VoidErrResult, allocator, buffer);
+        try std.testing.expectEqual(result.bytes_read, 5);
+        try std.testing.expect(result.value.isOk());
+        try std.testing.expectEqual(result.value.ok, 42);
+    }
+
+    // Err(void)
+    {
+        const err_value = VoidErrResult.fromErr({});
+        const buffer = try encoder.encodeAlloc(allocator, err_value);
+        defer allocator.free(buffer);
+        try std.testing.expectEqualSlices(u8, &[_]u8{0x01}, buffer);
+
+        const result = try decoder.decodeAlloc(VoidErrResult, allocator, buffer);
+        try std.testing.expectEqual(result.bytes_read, 1);
+        try std.testing.expect(result.value.isErr());
+    }
+}
+
+test "nested-option" {
+    // Test Option<Option<T>>
+    const allocator = std.testing.allocator;
+
+    // None: 0x00
+    {
+        const value: ??u8 = null;
+        const buffer = try encoder.encodeAlloc(allocator, value);
+        defer allocator.free(buffer);
+        try std.testing.expectEqualSlices(u8, &[_]u8{0x00}, buffer);
+
+        const result = try decoder.decodeAlloc(??u8, allocator, buffer);
+        try std.testing.expectEqual(result.value, null);
+    }
+
+    // Some(None): 0x01 0x00
+    {
+        const value: ??u8 = @as(?u8, null);
+        const buffer = try encoder.encodeAlloc(allocator, value);
+        defer allocator.free(buffer);
+        try std.testing.expectEqualSlices(u8, &[_]u8{ 0x01, 0x00 }, buffer);
+
+        const result = try decoder.decodeAlloc(??u8, allocator, buffer);
+        try std.testing.expect(result.value != null);
+        try std.testing.expectEqual(result.value.?, null);
+    }
+
+    // Some(Some(42)): 0x01 0x01 0x2a
+    {
+        const value: ??u8 = @as(?u8, 42);
+        const buffer = try encoder.encodeAlloc(allocator, value);
+        defer allocator.free(buffer);
+        try std.testing.expectEqualSlices(u8, &[_]u8{ 0x01, 0x01, 0x2a }, buffer);
+
+        const result = try decoder.decodeAlloc(??u8, allocator, buffer);
+        try std.testing.expect(result.value != null);
+        try std.testing.expectEqual(result.value.?, 42);
+    }
+}
+
+test "compact-u128-max" {
+    // Test u128::MAX compact encoding
+    const value: u128 = std.math.maxInt(u128);
+    var buffer: [32]u8 = undefined;
+
+    const len = try encoder.encodeCompact(u128, value, &buffer);
+    // 16 bytes + 1 header = 17 bytes
+    // Header: (16 - 4) << 2 | 0b11 = 12 << 2 | 3 = 51 = 0x33
+    try std.testing.expectEqual(@as(usize, 17), len);
+    try std.testing.expectEqual(@as(u8, 0x33), buffer[0]);
+
+    // Verify round-trip
+    const result = try decoder.decodeCompact(u128, buffer[0..len]);
+    try std.testing.expectEqual(value, result.value);
+}
+
+test "decode-insufficient-data" {
+    // Test that decoding with insufficient data returns proper errors
+    const allocator = std.testing.allocator;
+
+    // u32 needs 4 bytes
+    {
+        const data = &[_]u8{ 0x01, 0x02 }; // Only 2 bytes
+        const result = decoder.decodeAlloc(u32, allocator, data);
+        try std.testing.expectError(error.InsufficientData, result);
+    }
+
+    // Compact with incomplete multi-byte encoding
+    {
+        const data = &[_]u8{0x01}; // Two-byte mode but only 1 byte
+        const result = decoder.decodeCompact(u32, data);
+        try std.testing.expectError(error.InsufficientData, result);
+    }
+
+    // Option with Some but no payload
+    {
+        const data = &[_]u8{0x01}; // Some(?) but no value
+        const result = decoder.decodeAlloc(?u32, allocator, data);
+        try std.testing.expectError(error.InsufficientData, result);
+    }
+}
+
+test "decode-invalid-bool" {
+    // Test that invalid bool values are rejected
+    const allocator = std.testing.allocator;
+
+    const data = &[_]u8{0x02}; // Invalid: not 0 or 1
+    const result = decoder.decodeAlloc(bool, allocator, data);
+    try std.testing.expectError(error.InvalidBool, result);
+}
+
+test "decode-invalid-option" {
+    // Test that invalid option prefix is rejected
+    const allocator = std.testing.allocator;
+
+    const data = &[_]u8{0x02}; // Invalid: not 0 or 1
+    const result = decoder.decodeAlloc(?u8, allocator, data);
+    try std.testing.expectError(error.InvalidOption, result);
+}
+
+test "decode-invalid-enum-variant" {
+    // Test that invalid enum variant index is rejected
+    const allocator = std.testing.allocator;
+
+    const SimpleEnum = union(enum) {
+        A,
+        B: u32,
+    };
+
+    // Variant index 5 doesn't exist
+    const data = &[_]u8{0x05};
+    const result = decoder.decodeAlloc(SimpleEnum, allocator, data);
+    try std.testing.expectError(error.InvalidEnumVariant, result);
+}
+
+test "empty-struct" {
+    // Test encoding/decoding of empty struct (unit type)
+    const allocator = std.testing.allocator;
+
+    const EmptyStruct = struct {};
+
+    const value = EmptyStruct{};
+    const buffer = try encoder.encodeAlloc(allocator, value);
+    defer allocator.free(buffer);
+
+    // Empty struct encodes to 0 bytes
+    try std.testing.expectEqual(@as(usize, 0), buffer.len);
+
+    // Decoding empty data gives empty struct
+    const result = try decoder.decodeAlloc(EmptyStruct, allocator, &[_]u8{});
+    try std.testing.expectEqual(result.bytes_read, 0);
+    _ = result.value; // Just verify it was created
+}
+
+test "union-with-void-variant" {
+    // Test union with void payload variant
+    const allocator = std.testing.allocator;
+
+    const MixedUnion = union(enum) {
+        Empty,
+        WithValue: u32,
+    };
+
+    // Empty variant (void) - use explicit type annotation
+    {
+        const value: MixedUnion = .Empty;
+        const buffer = try encoder.encodeAlloc(allocator, value);
+        defer allocator.free(buffer);
+        try std.testing.expectEqualSlices(u8, &[_]u8{0x00}, buffer);
+
+        const result = try decoder.decodeAlloc(MixedUnion, allocator, buffer);
+        try std.testing.expect(result.value == .Empty);
+    }
+
+    // WithValue variant
+    {
+        const value: MixedUnion = .{ .WithValue = 42 };
+        const buffer = try encoder.encodeAlloc(allocator, value);
+        defer allocator.free(buffer);
+        try std.testing.expectEqualSlices(u8, &[_]u8{ 0x01, 0x2a, 0x00, 0x00, 0x00 }, buffer);
+
+        const result = try decoder.decodeAlloc(MixedUnion, allocator, buffer);
+        try std.testing.expectEqual(result.value.WithValue, 42);
+    }
 }

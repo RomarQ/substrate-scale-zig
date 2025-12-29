@@ -69,6 +69,14 @@ pub fn decodeAlloc(comptime T: type, allocator: std.mem.Allocator, data: []const
 }
 
 pub fn decodeCompact(comptime T: type, data: []const u8) !DecodeResult(T) {
+    // Compile-time validation: SCALE compact encoding only supports unsigned integers
+    comptime {
+        const type_info = @typeInfo(T);
+        if (type_info != .int or type_info.int.signedness != .unsigned) {
+            @compileError("SCALE compact encoding only supports unsigned integer types. Got: " ++ @typeName(T));
+        }
+    }
+
     if (data.len == 0) return error.InsufficientData;
 
     const first_byte = data[0];
@@ -238,6 +246,24 @@ fn decodeTaggedUnion(comptime T: type, allocator: std.mem.Allocator, data: []con
 
     if (info.tag_type == null) {
         @compileError("Untagged unions cannot be SCALE decoded. Use a tagged union (union(enum)).");
+    }
+
+    // Compile-time validation: SCALE uses u8 for variant indices (max 255)
+    comptime {
+        if (@hasDecl(T, "scale_indices")) {
+            // Validate custom indices don't exceed 255
+            for (info.fields) |field| {
+                const idx = @field(T.scale_indices, field.name);
+                if (idx > 255) {
+                    @compileError("SCALE variant index must be <= 255. Found index " ++ @import("std").fmt.comptimePrint("{}", .{idx}) ++ " for variant '" ++ field.name ++ "'");
+                }
+            }
+        } else {
+            // Validate auto-generated indices don't exceed 255
+            if (info.fields.len > 256) {
+                @compileError("SCALE unions cannot have more than 256 variants (indices 0-255)");
+            }
+        }
     }
 
     if (data.len < 1) return error.InsufficientData;
