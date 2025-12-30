@@ -267,8 +267,7 @@ pub fn encode(value: anytype, buffer: []u8) !usize {
                 return encodeArray(array_info.child, slice, buffer, encode);
             }
 
-            std.debug.print("Unsupported type: {s}\n", .{@typeName(T)});
-            return error.UnsupportedType;
+            @compileError("Unsupported pointer type for SCALE encoding: " ++ @typeName(T));
         },
         .optional => |info| {
             return encodeOption(info.child, value, buffer, encode);
@@ -280,8 +279,7 @@ pub fn encode(value: anytype, buffer: []u8) !usize {
             return encodeTaggedUnion(T, value, buffer);
         },
         else => {
-            std.debug.print("Unsupported type: {s}\n", .{@typeName(T)});
-            return error.UnsupportedType;
+            @compileError("Unsupported type for SCALE encoding: " ++ @typeName(T));
         },
     };
 }

@@ -50,8 +50,7 @@ pub fn calculateEncodedSize(value: anytype) !usize {
                 }
             }
 
-            std.debug.print("Unsupported type: {s}, {any}\n", .{ @typeName(T), @typeInfo(T) });
-            return error.UnsupportedType;
+            @compileError("Unsupported pointer type for SCALE size calculation: " ++ @typeName(T));
         },
         .optional => {
             const base_size = 1;
@@ -84,8 +83,7 @@ pub fn calculateEncodedSize(value: anytype) !usize {
             return size;
         },
         else => {
-            std.debug.print("Unsupported type: {s}\n", .{@typeName(T)});
-            return error.UnsupportedType;
+            @compileError("Unsupported type for SCALE size calculation: " ++ @typeName(T));
         },
     };
 }
